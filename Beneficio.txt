@@ -1,0 +1,263 @@
+-- Tablas
+
+CREATE TABLE beneficio.agricultor (
+    cui_agricultor VARCHAR(20) PRIMARY KEY,
+    nit VARCHAR(15) UNIQUE,
+    nombre VARCHAR(100) NOT NULL,
+    observaciones TEXT,
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE beneficio.transportista (
+    cui VARCHAR(20) PRIMARY KEY,
+    licencia VARCHAR(20) NOT NULL UNIQUE,
+    nombre VARCHAR(100) NOT NULL,
+    empresa VARCHAR(100),
+    observaciones TEXT,
+    agricultor VARCHAR(20) NOT NULL,
+    estado BOOLEAN DEFAULT TRUE,
+    FOREIGN KEY (agricultor) REFERENCES beneficio.agricultor(cui_agricultor) ON DELETE SET NULL
+);
+
+CREATE TABLE beneficio.transportes (
+    placa VARCHAR(10) PRIMARY KEY,
+    observaciones TEXT,
+    agricultor VARCHAR(20) NOT NULL,
+    estado BOOLEAN DEFAULT TRUE,
+    FOREIGN KEY (agricultor) REFERENCES beneficio.agricultor(cui_agricultor) ON DELETE SET NULL
+);
+
+CREATE TABLE beneficio.usuarios (
+    id_usuario SERIAL PRIMARY KEY,
+    usuario VARCHAR(50) NOT NULL UNIQUE,
+    password TEXT NOT NULL
+);
+
+CREATE TABLE beneficio.estados_cuentas (
+    id_estado SERIAL PRIMARY KEY,
+    estado VARCHAR(50) NOT NULL UNIQUE
+);
+
+CREATE TABLE beneficio.cuentas (
+    no_cuenta SERIAL PRIMARY KEY,
+    peso_total DECIMAL(10,2) NOT NULL,
+    cant_parcialidades INT NOT NULL DEFAULT 0,
+    fecha_envio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    dif_total DECIMAL(10,2) NOT NULL,
+    tolerancia DECIMAL(5,2) NOT NULL,
+    estado INT NOT NULL,
+    agricultor VARCHAR(20) NOT NULL,
+    FOREIGN KEY (estado) REFERENCES beneficio.estados_cuentas(id_estado) ON DELETE RESTRICT,
+    FOREIGN KEY (agricultor) REFERENCES beneficio.agricultor(cui_agricultor) ON DELETE SET NULL
+);
+
+CREATE TABLE beneficio.parcialidades (
+    id_parcialidad SERIAL PRIMARY KEY,
+    peso DECIMAL(10,2) NOT NULL,
+    tipo_medida VARCHAR(20) NOT NULL,
+    fecha_rec TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    detalle TEXT,
+    estado BOOLEAN DEFAULT TRUE,
+    id_usuario INT NOT NULL,
+    placa_transporte VARCHAR(10) NOT NULL,
+    no_cuenta INT NOT NULL,
+    FOREIGN KEY (id_usuario) REFERENCES beneficio.usuarios(id_usuario) ON DELETE CASCADE,
+    FOREIGN KEY (placa_transporte) REFERENCES beneficio.transportes(placa) ON DELETE CASCADE,
+    FOREIGN KEY (no_cuenta) REFERENCES beneficio.cuentas(no_cuenta) ON DELETE CASCADE
+);
+
+CREATE TABLE beneficio.bitacora (
+    id SERIAL PRIMARY KEY,
+    tabla_afectada TEXT NOT NULL,
+    id_registro_afectado TEXT NOT NULL,  
+    accion CHAR(1) NOT NULL CHECK (accion IN ('I', 'U', 'D')),
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario TEXT NOT NULL
+);
+
+CREATE TABLE beneficio.bitacora_detalle (
+    id SERIAL PRIMARY KEY,
+    id_bitacora INTEGER NOT NULL,
+    valor_anterior TEXT,
+    valor_nuevo TEXT,
+    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    usuario TEXT NOT NULL,
+    FOREIGN KEY (id_bitacora) REFERENCES beneficio.bitacora(id) ON DELETE CASCADE
+);
+INSERT INTO beneficio.agricultor (cui_agricultor, nit, nombre, observaciones, fecha_creacion) 
+VALUES ('1234567890123', '1234567-8', 'Juan Pérez', 'Productor de café orgánico', CURRENT_TIMESTAMP);
+
+UPDATE beneficio.agricultor 
+SET nombre = 'Juan Pérez López', observaciones = 'Productor de café y cacao' 
+WHERE cui_agricultor = '1234567890123';
+
+DELETE FROM beneficio.agricultor 
+WHERE cui_agricultor = '1234567890123';
+
+
+SELECT * FROM beneficio.bitacora;
+
+SELECT * FROM beneficio.bitacora_detalle;
+
+-- Funciones
+
+CREATE OR REPLACE FUNCTION beneficio.registrar_bitacora_insert()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_usuario TEXT := CURRENT_USER;
+    v_id_registro TEXT;
+    v_bitacora_id INTEGER;
+    v_campo TEXT;
+    v_valor_nuevo TEXT;
+BEGIN
+    EXECUTE format('SELECT ($1).%I::TEXT', TG_ARGV[0]) INTO v_id_registro USING NEW;
+
+    INSERT INTO beneficio.bitacora (tabla_afectada, id_registro_afectado, accion, usuario)
+    VALUES (TG_TABLE_NAME, v_id_registro, 'I', v_usuario)
+    RETURNING id INTO v_bitacora_id;
+
+    FOR v_campo IN 
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = TG_TABLE_SCHEMA
+        AND table_name = TG_TABLE_NAME
+    LOOP
+        EXECUTE format('SELECT ($1).%I::TEXT', v_campo)
+        INTO v_valor_nuevo
+        USING NEW;
+
+        INSERT INTO beneficio.bitacora_detalle (id_bitacora, valor_anterior, valor_nuevo, usuario)
+        VALUES (v_bitacora_id, NULL, v_valor_nuevo, v_usuario);
+    END LOOP;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION beneficio.registrar_bitacora_update()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_usuario TEXT := CURRENT_USER;
+    v_id_registro TEXT;
+    v_bitacora_id INTEGER;
+    v_campo TEXT;
+    v_valor_anterior TEXT;
+    v_valor_nuevo TEXT;
+BEGIN
+    EXECUTE format('SELECT ($1).%I::TEXT', TG_ARGV[0]) INTO v_id_registro USING OLD;
+
+    INSERT INTO beneficio.bitacora (tabla_afectada, id_registro_afectado, accion, usuario)
+    VALUES (TG_TABLE_NAME, v_id_registro, 'U', v_usuario)
+    RETURNING id INTO v_bitacora_id;
+
+    FOR v_campo IN 
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = TG_TABLE_SCHEMA
+        AND table_name = TG_TABLE_NAME
+    LOOP
+        BEGIN
+            EXECUTE format('SELECT ($1).%I::TEXT, ($2).%I::TEXT', v_campo, v_campo)
+            INTO v_valor_anterior, v_valor_nuevo
+            USING OLD, NEW;
+
+            IF v_valor_anterior IS DISTINCT FROM v_valor_nuevo THEN
+                INSERT INTO beneficio.bitacora_detalle (id_bitacora, valor_anterior, valor_nuevo, usuario)
+                VALUES (v_bitacora_id, v_valor_anterior, v_valor_nuevo, v_usuario);
+            END IF;
+        EXCEPTION WHEN undefined_column THEN
+            CONTINUE;
+        END;
+    END LOOP;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION beneficio.registrar_bitacora_delete()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_usuario TEXT := CURRENT_USER;
+    v_id_registro TEXT;
+    v_bitacora_id INTEGER;
+    v_campo TEXT;
+    v_valor_anterior TEXT;
+BEGIN
+    EXECUTE format('SELECT ($1).%I::TEXT', TG_ARGV[0]) INTO v_id_registro USING OLD;
+
+    INSERT INTO beneficio.bitacora (tabla_afectada, id_registro_afectado, accion, usuario)
+    VALUES (TG_TABLE_NAME, v_id_registro, 'D', v_usuario)
+    RETURNING id INTO v_bitacora_id;
+
+    FOR v_campo IN 
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = TG_TABLE_SCHEMA
+        AND table_name = TG_TABLE_NAME
+    LOOP
+        EXECUTE format('SELECT ($1).%I::TEXT', v_campo)
+        INTO v_valor_anterior
+        USING OLD;
+
+        INSERT INTO beneficio.bitacora_detalle (id_bitacora, valor_anterior, valor_nuevo, usuario)
+        VALUES (v_bitacora_id, v_valor_anterior, NULL, v_usuario);
+    END LOOP;
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 	Trigger
+DO $$ 
+DECLARE 
+    r RECORD;
+    sql_query TEXT;
+    primary_key TEXT;
+BEGIN
+    FOR r IN (
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'beneficio' 
+        AND table_type = 'BASE TABLE'
+        AND table_name NOT IN ('bitacora', 'bitacora_detalle')
+    ) 
+    LOOP
+        SELECT column_name INTO primary_key
+        FROM information_schema.key_column_usage
+        WHERE table_schema = 'beneficio'
+        AND table_name = r.table_name
+        LIMIT 1;
+
+        IF primary_key IS NOT NULL THEN
+            sql_query := format('DROP TRIGGER IF EXISTS tr_insert_%I ON beneficio.%I;', r.table_name, r.table_name);
+            EXECUTE sql_query;
+
+            sql_query := format('DROP TRIGGER IF EXISTS tr_update_%I ON beneficio.%I;', r.table_name, r.table_name);
+            EXECUTE sql_query;
+
+            sql_query := format('DROP TRIGGER IF EXISTS tr_delete_%I ON beneficio.%I;', r.table_name, r.table_name);
+            EXECUTE sql_query;
+
+            sql_query := format('
+                CREATE TRIGGER tr_insert_%I
+                AFTER INSERT ON beneficio.%I
+                FOR EACH ROW
+                EXECUTE FUNCTION beneficio.registrar_bitacora_insert(''%I'');', r.table_name, r.table_name, primary_key);
+            EXECUTE sql_query;
+
+            sql_query := format('
+                CREATE TRIGGER tr_update_%I
+                AFTER UPDATE ON beneficio.%I
+                FOR EACH ROW
+                EXECUTE FUNCTION beneficio.registrar_bitacora_update(''%I'');', r.table_name, r.table_name, primary_key);
+            EXECUTE sql_query;
+
+            sql_query := format('
+                CREATE TRIGGER tr_delete_%I
+                AFTER DELETE ON beneficio.%I
+                FOR EACH ROW
+                EXECUTE FUNCTION beneficio.registrar_bitacora_delete(''%I'');', r.table_name, r.table_name, primary_key);
+            EXECUTE sql_query;
+        END IF;
+    END LOOP;
+END $$;

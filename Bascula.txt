@@ -1,0 +1,33 @@
+CREATE TABLE bascula.cuentas (
+    no_cuenta INT PRIMARY KEY,
+    cant_parcialidades INT,
+    medida_peso VARCHAR(50),
+    fecha_envio DATE
+);
+
+
+CREATE TABLE bascula.detalle_pesaje (
+    id_parcialidad INT PRIMARY KEY,
+    peso_estimado INT,
+    peso_obtenido INT,
+    fecha DATE,
+    observaciones VARCHAR(50),
+    medida_peso VARCHAR(50),
+    id_usuario INT,
+    no_cuenta INT,
+	FOREIGN KEY (id_usuario) REFERENCES bascula.usuarios(id_usuario),
+    FOREIGN KEY (no_cuenta) REFERENCES bascula.cuentas(no_cuenta)
+);
+
+CREATE TABLE bascula.usuarios (
+    id_usuario INT PRIMARY KEY,
+    nombre VARCHAR(50),
+	contrasenia VARCHAR(50),
+    id_roles INT,
+    FOREIGN KEY (id_roles) REFERENCES bascula.roles(id_roles)
+);
+
+CREATE TABLE bascula.roles (
+    id_roles INT PRIMARY KEY,
+    nombre VARCHAR(50)    
+);
