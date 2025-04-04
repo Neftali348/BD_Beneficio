@@ -82,12 +82,11 @@ CREATE TABLE agricultor.bitacora (
     id SERIAL PRIMARY KEY,
     tabla_afectada TEXT NOT NULL,
     id_registro_afectado TEXT NOT NULL,  
-    campo_afectado TEXT NOT NULL,
-    valor_actual TEXT NOT NULL,  
     accion CHAR(1) NOT NULL CHECK (accion IN ('I', 'U', 'D')),
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     usuario TEXT NOT NULL
 );
+
 
 CREATE TABLE agricultor.bitacora_detalle (
     id SERIAL PRIMARY KEY,
@@ -101,16 +100,36 @@ CREATE TABLE agricultor.bitacora_detalle (
 
 -- 3. CREAR LAS FUNCIONES DE BITÁCORA
 
+
 CREATE OR REPLACE FUNCTION agricultor.registrar_bitacora_insert()
 RETURNS TRIGGER AS $$
 DECLARE
     v_usuario TEXT := CURRENT_USER;
     v_id_registro TEXT;
+    v_bitacora_id INTEGER;
+    v_campo TEXT;
+    v_valor_nuevo TEXT;
 BEGIN
-    v_id_registro := NEW.*::TEXT;
+    EXECUTE format('SELECT ($1).%I::TEXT', TG_ARGV[0]) INTO v_id_registro USING NEW;
 
-    INSERT INTO agricultor.bitacora (tabla_afectada, id_registro_afectado, campo_afectado, valor_actual, accion, usuario)
-    VALUES (TG_TABLE_NAME, v_id_registro, 'Todos', row_to_json(NEW)::TEXT, 'I', v_usuario);
+    INSERT INTO agricultor.bitacora (tabla_afectada, id_registro_afectado, accion, usuario)
+    VALUES (TG_TABLE_NAME, v_id_registro, 'I', v_usuario)
+    RETURNING id INTO v_bitacora_id;
+
+    FOR v_campo IN 
+        SELECT column_name FROM information_schema.columns 
+        WHERE table_schema = TG_TABLE_SCHEMA
+        AND table_name = TG_TABLE_NAME
+    LOOP
+        EXECUTE format('SELECT ($1).%I::TEXT', v_campo)
+        INTO v_valor_nuevo
+        USING NEW;
+
+        IF v_valor_nuevo IS NOT NULL THEN
+            INSERT INTO agricultor.bitacora_detalle (id_bitacora, valor_anterior, valor_nuevo, usuario)
+            VALUES (v_bitacora_id, NULL, v_valor_nuevo, v_usuario);
+        END IF;
+    END LOOP;
 
     RETURN NEW;
 END;
@@ -121,12 +140,16 @@ RETURNS TRIGGER AS $$
 DECLARE
     v_usuario TEXT := CURRENT_USER;
     v_id_registro TEXT;
+    v_bitacora_id INTEGER;
     v_campo TEXT;
     v_valor_anterior TEXT;
     v_valor_nuevo TEXT;
-    v_bitacora_id INTEGER;
 BEGIN
-    v_id_registro := OLD.*::TEXT;
+    EXECUTE format('SELECT ($1).%I::TEXT', TG_ARGV[0]) INTO v_id_registro USING OLD;
+
+    INSERT INTO agricultor.bitacora (tabla_afectada, id_registro_afectado, accion, usuario)
+    VALUES (TG_TABLE_NAME, v_id_registro, 'U', v_usuario)
+    RETURNING id INTO v_bitacora_id;
 
     FOR v_campo IN 
         SELECT column_name FROM information_schema.columns 
@@ -137,10 +160,6 @@ BEGIN
         USING OLD, NEW;
 
         IF v_valor_anterior IS DISTINCT FROM v_valor_nuevo THEN
-            INSERT INTO agricultor.bitacora (tabla_afectada, id_registro_afectado, campo_afectado, valor_actual, accion, usuario)
-            VALUES (TG_TABLE_NAME, v_id_registro, v_campo, v_valor_nuevo, 'U', v_usuario)
-            RETURNING id INTO v_bitacora_id;
-
             INSERT INTO agricultor.bitacora_detalle (id_bitacora, valor_anterior, valor_nuevo, usuario)
             VALUES (v_bitacora_id, v_valor_anterior, v_valor_nuevo, v_usuario);
         END IF;
@@ -150,12 +169,30 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION agricultor.registrar_bitacora_delete()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_usuario TEXT := CURRENT_USER;
+    v_id_registro TEXT;
+BEGIN
+    EXECUTE format('SELECT ($1).%I::TEXT', TG_ARGV[0]) INTO v_id_registro USING OLD;
+
+    INSERT INTO agricultor.bitacora (tabla_afectada, id_registro_afectado, accion, usuario)
+    VALUES (TG_TABLE_NAME, v_id_registro, 'D', v_usuario);
+
+    RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+
 -- 4. CREAR LOS TRIGGERS PARA TODAS LAS TABLAS DEL ESQUEMA
+
 
 DO $$ 
 DECLARE 
     r RECORD;
     sql_query TEXT;
+    primary_key TEXT;
 BEGIN
     FOR r IN (
         SELECT table_name 
@@ -165,22 +202,77 @@ BEGIN
         AND table_name NOT IN ('bitacora', 'bitacora_detalle')
     ) 
     LOOP
-        sql_query := format('
-            CREATE TRIGGER tr_insert_%I
-            AFTER INSERT ON agricultor.%I
-            FOR EACH ROW
-            EXECUTE FUNCTION agricultor.registrar_bitacora_insert();', r.table_name, r.table_name);
-        EXECUTE sql_query;
+        SELECT column_name INTO primary_key
+        FROM information_schema.key_column_usage
+        WHERE table_schema = 'agricultor'
+        AND table_name = r.table_name
+        LIMIT 1;
 
-        sql_query := format('
-            CREATE TRIGGER tr_update_%I
-            AFTER UPDATE ON agricultor.%I
-            FOR EACH ROW
-            EXECUTE FUNCTION agricultor.registrar_bitacora_update();', r.table_name, r.table_name);
-        EXECUTE sql_query;
+        IF primary_key IS NOT NULL THEN
+            sql_query := format('DROP TRIGGER IF EXISTS tr_insert_%I ON agricultor.%I;', r.table_name, r.table_name);
+            EXECUTE sql_query;
+
+            sql_query := format('DROP TRIGGER IF EXISTS tr_update_%I ON agricultor.%I;', r.table_name, r.table_name);
+            EXECUTE sql_query;
+
+            sql_query := format('DROP TRIGGER IF EXISTS tr_delete_%I ON agricultor.%I;', r.table_name, r.table_name);
+            EXECUTE sql_query;
+
+            sql_query := format('
+                CREATE TRIGGER tr_insert_%I
+                AFTER INSERT ON agricultor.%I
+                FOR EACH ROW
+                EXECUTE FUNCTION agricultor.registrar_bitacora_insert(''%I'');', r.table_name, r.table_name, primary_key);
+            EXECUTE sql_query;
+
+            sql_query := format('
+                CREATE TRIGGER tr_update_%I
+                AFTER UPDATE ON agricultor.%I
+                FOR EACH ROW
+                EXECUTE FUNCTION agricultor.registrar_bitacora_update(''%I'');', r.table_name, r.table_name, primary_key);
+            EXECUTE sql_query;
+
+            sql_query := format('
+                CREATE TRIGGER tr_delete_%I
+                AFTER DELETE ON agricultor.%I
+                FOR EACH ROW
+                EXECUTE FUNCTION agricultor.registrar_bitacora_delete(''%I'');', r.table_name, r.table_name, primary_key);
+            EXECUTE sql_query;
+        END IF;
     END LOOP;
 END $$;
 
 -- 5. INSERTAR DATOS INICIALES
 INSERT INTO agricultor.agricultor (cui_agricultor, nit, nombre, observaciones, nombre_usuario, password) 
-VALUES ('5234567890101', '52345678', 'Agricultor 1', 'Productor de café', 'agricultor1', 'password123');
+VALUES ('8234567890101', '82345678', 'Agricultor 5', 'Productor de café', 'agricultor5', 'password123');
+INSERT INTO agricultor.agricultor (cui_agricultor, nit, nombre, observaciones, nombre_usuario, password) 
+VALUES ('6234567890123', '62345678', 'Agricultor 2', 'Exportador de café', 'agricultor2', 'password456');
+
+SELECT * FROM agricultor.bitacora;
+
+SELECT * FROM agricultor.bitacora_detalle;
+
+INSERT INTO agricultor.transportistas (cui, licencia, nombre, fecha_nacimiento, fecha_venc_lic, disponible, empresa, observaciones, tipo_licencia, agricultor, estado)
+VALUES 
+('4567890123456', 'L123456', 'Juan Pérez', '1985-07-15', '2026-08-20', TRUE, 'Transporte Pérez', 'Transportista de café', 1, '5234567890101', TRUE),
+('7890123456789', 'L789012', 'María López', '1990-11-30', '2025-05-10', TRUE, 'Logística López', 'Especialista en carga pesada', 2, '6234567890123', TRUE);
+
+INSERT INTO agricultor.transportes (placa, marca, color, linea, modelo, disponible, estado, agricultor)
+VALUES 
+('P789GHI', 'Toyota', 'Rojo', 'Hilux', '2022', TRUE, TRUE, '5234567890101');
+
+UPDATE agricultor.agricultor
+SET nombre = 'Agricultor 5 Prueba',
+    observaciones = 'Ahora también exporta café',
+    password = 'password456'
+WHERE cui_agricultor = '8234567890101';
+
+
+UPDATE agricultor.transportes
+SET marca = 'Honda',
+    color = 'Negro',
+    linea = 'Frontier',
+    modelo = '2024',
+    disponible = FALSE,
+    estado = FALSE
+WHERE placa = 'P123ABC';
