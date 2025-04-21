@@ -135,7 +135,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE OR REPLACE FUNCTION agricultor.registrar_bitacora_update()
+
+CREATE OR REPLACE FUNCTION agricultor.registrar_bitacora_update() 
 RETURNS TRIGGER AS $$
 DECLARE
     v_usuario TEXT := CURRENT_USER;
@@ -152,17 +153,24 @@ BEGIN
     RETURNING id INTO v_bitacora_id;
 
     FOR v_campo IN 
-        SELECT column_name FROM information_schema.columns 
+        SELECT column_name 
+        FROM information_schema.columns 
         WHERE table_name = TG_TABLE_NAME
+          AND table_schema = TG_TABLE_SCHEMA
+          AND column_name != TG_ARGV[0]
     LOOP
-        EXECUTE format('SELECT ($1).%I, ($2).%I', v_campo, v_campo) 
-        INTO v_valor_anterior, v_valor_nuevo 
-        USING OLD, NEW;
+        BEGIN
+            EXECUTE format('SELECT ($1).%I::TEXT, ($2).%I::TEXT', v_campo, v_campo)
+            INTO v_valor_anterior, v_valor_nuevo
+            USING OLD, NEW;
 
-        IF v_valor_anterior IS DISTINCT FROM v_valor_nuevo THEN
-            INSERT INTO agricultor.bitacora_detalle (id_bitacora, valor_anterior, valor_nuevo, usuario)
-            VALUES (v_bitacora_id, v_valor_anterior, v_valor_nuevo, v_usuario);
-        END IF;
+            IF v_valor_anterior IS DISTINCT FROM v_valor_nuevo THEN
+                INSERT INTO agricultor.bitacora_detalle (id_bitacora, valor_anterior, valor_nuevo, usuario)
+                VALUES (v_bitacora_id, v_valor_anterior, v_valor_nuevo, v_usuario);
+            END IF;
+        EXCEPTION WHEN undefined_column THEN
+            CONTINUE;
+        END;
     END LOOP;
 
     RETURN NEW;
