@@ -1,0 +1,322 @@
+select * from bascula.cuentas;
+select * from bascula.roles;
+select * from bascula.usuarios;
+
+
+SELECT conname
+FROM pg_constraint
+WHERE conrelid = 'bascula.usuarios'::regclass
+  AND contype = 'f';
+
+ALTER TABLE bascula.usuarios
+DROP CONSTRAINT usuarios_id_roles_fkey;
+
+DROP TABLE bascula.roles;
+
+SELECT conname
+FROM pg_constraint
+WHERE conrelid = 'bascula.usuarios'::regclass AND contype = 'f';
+
+ALTER TABLE bascula.usuarios
+DROP CONSTRAINT id_roles;
+
+ALTER TABLE bascula.usuarios
+DROP COLUMN id_roles;
+
+
+INSERT INTO seguridad.roles (nombre, sistema)
+VALUES 
+  ('USUARIO', 'agricultor');
+
+
+
+-- Neftali será ADMIN
+INSERT INTO seguridad.usuario_roles (id_usuario, id_rol)
+VALUES (
+    1,
+    (SELECT id FROM seguridad.roles WHERE nombre = 'ADMIN' AND sistema = 'bascula')
+);
+
+-- Manuel será USUARIO
+INSERT INTO seguridad.usuario_roles (id_usuario, id_rol)
+VALUES (
+    2,
+    (SELECT id FROM seguridad.roles WHERE nombre = 'USUARIO' AND sistema = 'bascula')
+);
+
+
+DROP TABLE IF EXISTS bascula.usuarios;
+SELECT * 
+FROM seguridad.usuarios
+WHERE sistema = 'bascula';
+
+
+INSERT INTO seguridad.usuarios (username, password, sistema)
+VALUES ('neftaliE', '1234', 'bascula');
+
+INSERT INTO seguridad.roles (nombre, sistema)
+VALUES ('ADMIN', 'bascula'),
+       ('USUARIO', 'bascula');
+	   
+	   
+	   
+	   
+INSERT INTO seguridad.usuario_roles (id_usuario, id_rol)
+VALUES (
+    (SELECT id FROM seguridad.usuarios WHERE username = 'neftaliE' AND sistema = 'bascula'),
+    (SELECT id FROM seguridad.roles WHERE nombre = 'ADMIN' AND sistema = 'bascula')
+);
+
+SELECT * 
+FROM seguridad.usuarios 
+WHERE username = 'neftaliE' AND sistema = 'bascula';
+
+INSERT INTO seguridad.usuario_roles (id_usuario, id_rol)
+VALUES (
+    (SELECT id FROM seguridad.usuarios WHERE username = 'neftaliE' AND sistema = 'bascula'),
+    (SELECT id FROM seguridad.roles WHERE nombre = 'ADMIN' AND sistema = 'bascula')
+);
+
+SELECT id, nombre, sistema 
+FROM seguridad.roles 
+WHERE nombre = 'ADMIN' AND sistema = 'bascula';
+
+DELETE FROM seguridad.roles
+WHERE id = 5;
+
+
+select * from seguridad.roles;
+
+ALTER TABLE bascula.cuentas
+ADD COLUMN id_usuario INT;
+
+
+ALTER TABLE bascula.cuentas
+ADD CONSTRAINT fk_cuentas_usuario
+FOREIGN KEY (id_usuario)
+REFERENCES seguridad.usuarios(id);
+
+UPDATE bascula.cuentas
+SET id_usuario = (
+    SELECT id FROM seguridad.usuarios 
+    WHERE username = 'neftaliE' AND sistema = 'bascula' LIMIT 1
+)
+WHERE no_cuenta = 1;
+
+
+UPDATE bascula.cuentas
+SET id_usuario = (
+    SELECT id FROM seguridad.usuarios 
+    WHERE username = 'neftaliE' AND sistema = 'bascula' LIMIT 1
+)
+WHERE no_cuenta = 1;
+
+SELECT c.no_cuenta, c.cant_parcialidades, c.medida_peso, u.username
+FROM bascula.cuentas c
+JOIN seguridad.usuarios u ON c.id_usuario = u.id;
+select * from bascula.cuentas;
+
+SELECT id, username 
+FROM seguridad.usuarios 
+WHERE username = 'neftaliE' AND sistema = 'bascula';
+
+
+INSERT INTO bascula.cuentas (no_cuenta, cant_parcialidades, medida_peso, fecha_envio, id_usuario)
+VALUES (
+    101,         -- número de cuenta
+    3,           -- cantidad de parcialidades
+    'Kilogramos',-- unidad de medida
+    CURRENT_DATE,-- fecha de envío
+    (SELECT id FROM seguridad.usuarios WHERE username = 'neftali_bascula' AND sistema = 'bascula' LIMIT 1)
+);
+
+SELECT c.*, u.username 
+FROM bascula.cuentas c
+JOIN seguridad.usuarios u ON c.id_usuario = u.id
+WHERE c.no_cuenta = 101;
+
+
+select * from bascula.cuentas;
+
+SELECT * FROM bascula.cuentas WHERE no_cuenta = 101;
+
+UPDATE bascula.cuentas
+SET id_usuario = (
+    SELECT id FROM seguridad.usuarios WHERE username = 'neftaliE' AND sistema = 'bascula' LIMIT 1
+)
+WHERE no_cuenta = 101;
+
+SELECT c.*, u.username 
+FROM bascula.cuentas c
+JOIN seguridad.usuarios u ON c.id_usuario = u.id
+WHERE c.no_cuenta = 101;
+
+
+select * from seguridad.usuarios;
+
+
+
+DROP TABLE beneficio.usuarios;
+ALTER TABLE beneficio.parcialidades
+DROP CONSTRAINT parcialidades_id_usuario_fkey;
+
+ALTER TABLE beneficio.parcialidades
+ADD CONSTRAINT fk_parcialidades_usuario
+FOREIGN KEY (id_usuario)
+REFERENCES seguridad.usuarios(id);
+
+
+INSERT INTO seguridad.usuarios (username, password, sistema)
+VALUES ('Arody', '123', 'beneficio');
+
+INSERT INTO seguridad.roles (nombre, sistema)
+VALUES ('ADMIN', 'beneficio'), ('USUARIO', 'beneficio');
+
+
+
+INSERT INTO seguridad.usuario_roles (id_usuario, id_rol)
+VALUES (
+  (SELECT id FROM seguridad.usuarios WHERE username = 'arody' AND sistema = 'beneficio'),
+  (SELECT id FROM seguridad.roles WHERE nombre = 'ADMIN' AND sistema = 'beneficio')
+);
+
+SELECT * 
+FROM beneficio.parcialidades 
+WHERE id_usuario IS NULL;
+
+UPDATE beneficio.parcialidades
+SET id_usuario = (
+    SELECT id FROM seguridad.usuarios 
+    WHERE username = 'arody' AND sistema = 'beneficio'
+    LIMIT 1
+)
+WHERE id_usuario IS NULL;
+
+select * from beneficio.parcialidades;
+select * from seguridad.usuarios;
+select * from seguridad.roles;
+
+INSERT INTO beneficio.parcialidades (
+    peso,
+    tipo_medida,
+    fecha_rec,
+    detalle,
+    estado,
+    id_usuario,
+    placa_transporte,
+    no_cuenta
+)
+VALUES (
+    500.75,
+    'Kilogramos',
+    CURRENT_TIMESTAMP,
+    'Primera entrega del día',
+    TRUE,
+    (SELECT id FROM seguridad.usuarios WHERE username = 'Arody' AND sistema = 'beneficio' LIMIT 1),
+    'P123ABC',
+    1
+);
+
+INSERT INTO beneficio.estados_cuentas (estado)
+VALUES ('En proceso'), ('Pesado'), ('Finalizado');
+
+INSERT INTO beneficio.cuentas (
+    peso_total,
+    cant_parcialidades,
+    fecha_envio,
+    dif_total,
+    tolerancia,
+    estado,
+    agricultor
+)
+VALUES (
+    1500.00,     -- peso total
+    3,           -- parcialidades
+    CURRENT_TIMESTAMP,
+    0.00,        -- diferencia
+    2.5,         -- tolerancia
+    1,           -- id del estado (verifica que exista en estados_cuentas)
+    '1234567890123' -- agricultor existente
+);
+
+
+
+
+INSERT INTO beneficio.transportes (placa, observaciones, agricultor, estado)
+VALUES ('P123ABC', 'Camión de prueba', '1234567890123', TRUE);
+
+
+-- Insertar estado si no existe
+INSERT INTO beneficio.estados_cuentas (estado)
+VALUES ('En proceso')
+ON CONFLICT DO NOTHING;
+
+
+-- Insertar agricultor si no existe
+INSERT INTO beneficio.agricultor (cui_agricultor, nit, nombre)
+VALUES ('1234567890123', '1234567-8', 'Juan Pérez')
+ON CONFLICT DO NOTHING;
+
+
+-- Insertar cuenta (esto generará automáticamente el no_cuenta)
+INSERT INTO beneficio.cuentas (
+    peso_total,
+    cant_parcialidades,
+    fecha_envio,
+    dif_total,
+    tolerancia,
+    estado,
+    agricultor
+)
+VALUES (
+    1500.00,
+    3,
+    CURRENT_TIMESTAMP,
+    0.00,
+    2.5,
+    (SELECT id_estado FROM beneficio.estados_cuentas WHERE estado = 'En proceso' LIMIT 1),
+    '1234567890123'
+);
+
+
+SELECT no_cuenta 
+FROM beneficio.cuentas 
+ORDER BY no_cuenta DESC 
+LIMIT 1;
+
+INSERT INTO beneficio.parcialidades (
+    peso,
+    tipo_medida,
+    fecha_rec,
+    detalle,
+    estado,
+    id_usuario,
+    placa_transporte,
+    no_cuenta
+)
+VALUES (
+    500.75,
+    'Kilogramos',
+    CURRENT_TIMESTAMP,
+    'Primera entrega del día',
+    TRUE,
+    3,              -- ID de seguridad.usuarios
+    'P123ABC',      -- Placa que ya insertaste
+    3              -- ← valor correcto de cuenta que acabas de obtener
+);
+
+select * from seguridad.usuarios;
+
+SELECT 
+    p.id_parcialidad,
+    p.peso,
+    p.tipo_medida,
+    p.fecha_rec,
+    u.username AS usuario,
+    u.sistema,
+    p.no_cuenta,
+    p.placa_transporte
+FROM beneficio.parcialidades p
+JOIN seguridad.usuarios u ON p.id_usuario = u.id
+ORDER BY p.id_parcialidad DESC;
+
